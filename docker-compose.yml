@@ -1,0 +1,7 @@
+version: "3"
+services:
+  telegram_bot:
+    container_name: telegram_bot
+    restart: always
+    build: ./tg-bot
+
