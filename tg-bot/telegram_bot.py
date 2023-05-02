@@ -32,6 +32,11 @@ storage = MemoryStorage()
 bot = Bot(token=os.getenv('TOKEN'))
 dp = Dispatcher(bot, storage=storage)
 
+scope = ['r_liteprofile']
+redirect_url = 'https://localhost:8432/token'
+authorization_base_url = 'https://www.linkedin.com/oauth/v2/authorization'
+token_url = 'https://www.linkedin.com/oauth/v2/accessToken'
+linkedin = OAuth2Session(LINKEDIN_CLIENT_ID, redirect_uri=redirect_url, scope=scope)
 
 # urllb = InlineKeyboardMarkup(row_width=2)
 # urlButton = InlineKeyboardButton(text='ссылка 1', url='https://www.youtube.com/')
@@ -54,9 +59,23 @@ dp = Dispatcher(bot, storage=storage)
 
 @dp.message_handler(commands='start')
 async def command_start(message: types.Message):
+    message_parts: list[str] = message.text.split(' ')
+    await bot.send_message(message.chat.id, message.text)
+    if len(message_parts) == 2:
+        #который необходим для получения access_token и refresh_token
+        code: str = message_parts[1]
+        return
+
+    # await bot.send_message(message.chat.id, message.text)
+
+        # linkedin.fetch_token(token_url, client_secret=LINKEDIN_CLIENT_SECRET,
+        #              include_client_id=True,
+        #              authorization_response=redirect_response)
+
 
     keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
     button_phone = types.KeyboardButton(text="Linkedin аутентификация")
+    
 
     keyboard.add(button_phone)
     await bot.send_message(message.chat.id, 
@@ -67,31 +86,22 @@ async def command_start(message: types.Message):
 
 @dp.message_handler(Text(startswith='Linkedin аутентификация'))
 async def contact(message):
-    scope = ['r_liteprofile']
-    redirect_url = 'http://127.0.0.1'
-
-    # OAuth endpoints given in the LinkedIn API documentation
-    authorization_base_url = 'https://www.linkedin.com/oauth/v2/authorization'
-    token_url = 'https://www.linkedin.com/oauth/v2/accessToken'
-
-    linkedin = OAuth2Session(LINKEDIN_CLIENT_ID, redirect_uri='http://127.0.0.1', scope=scope)
-
     authorization_url, state = linkedin.authorization_url(authorization_base_url)
-    print(f"Please go here and authorize: {authorization_url}")
     webbrowser.open(authorization_url, new=2)
 
-    redirect_response = input('Paste the full redirect URL here:')
-    linkedin.fetch_token(token_url, client_secret=LINKEDIN_CLIENT_SECRET,
-                     include_client_id=True,
-                     authorization_response=redirect_response)
     
-    r = linkedin.get('https://api.linkedin.com/v2/me')
-    print(r.content)
 
-    pp = pprint.PrettyPrinter(indent=4)
-    pp.pprint(r.json())
 
-        
+    # linkedin.fetch_token(token_url, client_secret=LINKEDIN_CLIENT_SECRET,
+    #                  include_client_id=True,
+    #                  authorization_response=redirect_response)
+    
+    # r = linkedin.get('https://api.linkedin.com/v2/me')
+    # print(r.content)
+
+    # pp = pprint.PrettyPrinter(indent=4)
+    # pp.pprint(r.json())
+
     await bot.send_message(
                 message.chat.id, 
                 "Перевожу на аутентификацию")
