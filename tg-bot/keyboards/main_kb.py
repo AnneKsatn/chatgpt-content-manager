@@ -1,7 +1,7 @@
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
-b1 = KeyboardButton("/moodle")
-b2 = KeyboardButton("/shedule")
+b1 = KeyboardButton("/generate_content_plan")
+b2 = KeyboardButton("/generate_post")
 # b3 = KeyboardButton("/contacts")
 # b4 = KeyboardButton("/complaint")
 

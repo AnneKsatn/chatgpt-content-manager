@@ -5,6 +5,6 @@ WORKDIR /app
 
 COPY . .
 
-RUN pip install -U pip aiogram && apt-get update && pip install -r requirements.txt
+RUN pip install -U pip && pip install -r requirements.txt
 
 ENTRYPOINT ["python", "server.py"]

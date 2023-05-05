@@ -4,4 +4,8 @@ services:
     container_name: telegram_bot
     restart: always
     build: ./tg-bot
-
+  
+  fastapi:
+    container_name: fastapi
+    restart: always
+    build: ./fastapi

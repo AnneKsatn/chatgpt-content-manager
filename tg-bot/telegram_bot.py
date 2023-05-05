@@ -8,13 +8,12 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ParseMode
 # import aioschedule
 import  asyncio
 from keyboards import kb_student, kb_main, kb_moodle
-from states import FSMComplaint, FSMEnrollmentError, FSMStudentLogin
+from states import FSMComplaint, FSMEnrollmentError, FSMLinkedinLogin
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 import re 
-from data_fetcher import get_shedule, get_user, register_user
 import data_fetcher
 import os
 
@@ -26,17 +25,17 @@ from requests_oauthlib import OAuth2Session
 import pprint
 import webbrowser
 
+from linkedin_api import Linkedin
 
+import json
+import random
+import requests
+import string
 
+ 
 storage = MemoryStorage()
 bot = Bot(token=os.getenv('TOKEN'))
 dp = Dispatcher(bot, storage=storage)
-
-scope = ['r_liteprofile']
-redirect_url = 'https://localhost:8432/token'
-authorization_base_url = 'https://www.linkedin.com/oauth/v2/authorization'
-token_url = 'https://www.linkedin.com/oauth/v2/accessToken'
-linkedin = OAuth2Session(LINKEDIN_CLIENT_ID, redirect_uri=redirect_url, scope=scope)
 
 # urllb = InlineKeyboardMarkup(row_width=2)
 # urlButton = InlineKeyboardButton(text='ссылка 1', url='https://www.youtube.com/')
@@ -45,39 +44,16 @@ linkedin = OAuth2Session(LINKEDIN_CLIENT_ID, redirect_uri=redirect_url, scope=sc
 
 ##################### АВТОРИАЗАЦИЯ ########################
 
-# Text(startswith='mark_')
-
-# @dp.message_handler(Text(startswith='отмена'))
-# async def contact(message):
-#         await bot.send_message(
-#                 message.chat.id, 
-#                 "Возвращаю в главное меню", 
-#                 reply_markup=kb_main)
-
 
 ##################### АВТОРИАЗАЦИЯ ########################
 
 @dp.message_handler(commands='start')
 async def command_start(message: types.Message):
-    message_parts: list[str] = message.text.split(' ')
-    await bot.send_message(message.chat.id, message.text)
-    if len(message_parts) == 2:
-        #который необходим для получения access_token и refresh_token
-        code: str = message_parts[1]
-        return
-
-    # await bot.send_message(message.chat.id, message.text)
-
-        # linkedin.fetch_token(token_url, client_secret=LINKEDIN_CLIENT_SECRET,
-        #              include_client_id=True,
-        #              authorization_response=redirect_response)
-
 
     keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
     button_phone = types.KeyboardButton(text="Linkedin аутентификация")
-    
-
     keyboard.add(button_phone)
+
     await bot.send_message(message.chat.id, 
     'Привет! Рад тебя видеть!\n\n' 
     'Пожалуйста, предоставь доступ к своему Linkedin, чтобы я мог составить план контента.',
@@ -86,25 +62,42 @@ async def command_start(message: types.Message):
 
 @dp.message_handler(Text(startswith='Linkedin аутентификация'))
 async def contact(message):
-    authorization_url, state = linkedin.authorization_url(authorization_base_url)
-    webbrowser.open(authorization_url, new=2)
-
-    
+    await FSMLinkedinLogin.login.set()
+    await message.reply( "Введите Linkedin login")
 
 
-    # linkedin.fetch_token(token_url, client_secret=LINKEDIN_CLIENT_SECRET,
-    #                  include_client_id=True,
-    #                  authorization_response=redirect_response)
-    
-    # r = linkedin.get('https://api.linkedin.com/v2/me')
-    # print(r.content)
+@dp.message_handler(state=FSMLinkedinLogin.login)
+async def mark_lecture(message: types.Message, state: FSMContext):
+    await state.update_data(login=message.text.lower())
+    await state.set_state(FSMLinkedinLogin.password.state)
+    await message.reply( "Введите Linkedin password")
 
-    # pp = pprint.PrettyPrinter(indent=4)
-    # pp.pprint(r.json())
 
-    await bot.send_message(
+@dp.message_handler(state=FSMLinkedinLogin.password)
+async def mark_lecture(message: types.Message, state: FSMContext):
+    await state.update_data(password=message.text.lower())
+
+    auth_data = await state.get_data()
+    status = await data_fetcher.login(auth_data["login"], auth_data["password"])
+
+    if(status["status"] == "true"):
+        await bot.send_message(
                 message.chat.id, 
-                "Перевожу на аутентификацию")
+                "Аутентификация прошла успешно",
+                reply_markup=kb_main
+        )
+    else:
+        await message.reply( "Ошибка аутентификации")
+
+@dp.message_handler(commands='generate_content_plan')
+async def command_start(message: types.Message):
+    
+
+    await bot.send_message(message.chat.id, 
+    'Привет! Рад тебя видеть!\n\n' 
+    'Пожалуйста, предоставь доступ к своему Linkedin, чтобы я мог составить план контента.',
+                         reply_markup=keyboard)
+    
 
 # @dp.message_handler(content_types=['contact'])
 # async def contact(message):
@@ -181,88 +174,6 @@ async def contact(message):
 #         "Передал специалисту ошибку, платформу уже восстанавливают. Если у тебя сейчас занятие, попробуй договриться с преподавателем провести занятие на другом ресурсе (zoom, meets и т.д)", 
 #         reply_markup=kb_main)
 
-##################### MOODLE: Не записали на курс ########################
-
-# @dp.message_handler(Text(startswith='меня не записали на курс'), state=None)
-# async def professors(message: types.Message):
-#     await FSMEnrollmentError.course_title.set()
-#     await message.reply('Какой курс не отображается на платформе?')
-
-
-# @dp.message_handler(state=FSMEnrollmentError.course_title)
-# async def mark_lecture(message: types.Message, state: FSMContext):
-
-#     admins = await data_fetcher.get_admins()
-#     user = await data_fetcher.get_user_by_chat(message.chat.id)
-
-#     print(user)
-#     for admin in admins:
-#         await bot.send_message(
-#             admin['chat_id'], 
-#             "У пользователя " + user['name'] + " " + user['phone'] + " отсутствует курс" + message.text
-#             )
-
-#     async with state.proxy() as data:
-#         data['complaint'] = message.text
-#         await message.reply("Передаю ошибку специалисту, скоро тебе дадут доступ к курсу!")
-
-#     await state.finish()
-
-##################### MOODLE: Отсутствует занятие на курсе ########################
-
-# @dp.message_handler(Text(startswith='отсутствует конференция в курсе'))
-# async def professors(message: types.Message):
-#     await FSMMeetingError.course_title.set()
-#     await message.reply('На каком курсе отсутствует занятие?')
-
-
-
-# @dp.message_handler(state=FSMMeetingError.course_title)
-# async def mark_lecture(message: types.Message, state: FSMContext):
-
-#     admins = await data_fetcher.get_admins()
-#     user = await data_fetcher.get_user_by_chat(message.chat.id)
-
-#     print(user)
-#     for admin in admins:
-#         await bot.send_message(
-#             admin['chat_id'], 
-#             "У пользователя " + user['name'] + " " + user['phone'] + " отсутствует занятие на курсе" + message.text
-#             )
-
-#     async with state.proxy() as data:
-#         data['complaint'] = message.text
-#         await message.reply("Передаю ошибку специалисту, конференцию скоро добавят!")
-
-#     await state.finish()
-
-##################### MOODLE: Улучшения платформы ########################
-
-# @dp.message_handler(Text(startswith='предложить улучшения платформы'))
-# async def professors(message: types.Message):
-#     await FSMPlatformFeedback.getting_feedback.set()
-#     await message.reply('Расскажи, что бы хотелось улучшить в системе')
-
-
-
-# @dp.message_handler(state=FSMPlatformFeedback.getting_feedback)
-# async def mark_lecture(message: types.Message, state: FSMContext):
-
-#     admins = await data_fetcher.get_admins()
-#     user = await data_fetcher.get_user_by_chat(message.chat.id)
-
-#     print(user)
-#     for admin in admins:
-#         await bot.send_message(
-#             admin['chat_id'], 
-#             "У пользователя " + user['name'] + " " + user['phone'] + " есть фидбек по платформе " + message.text
-#             )
-
-#     async with state.proxy() as data:
-#         data['complaint'] = message.text
-#         await message.reply("Спасибо за твой отзыв! Мы внимательно изучаем обратную связь и всегда благодарны предложениям по улучшению системы.")
-
-#     await state.finish()
 
 
 ##################### ГЛАВНЫЙ МАКЕТ: РАСПИСАНИЕ ########################
