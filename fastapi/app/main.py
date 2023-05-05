@@ -4,6 +4,7 @@ from fastapi import FastAPI
 import uvicorn
 import requests
 from linkedin_api import Linkedin
+import openai
 
 
 app = FastAPI()
@@ -22,13 +23,11 @@ def read_root():
 
 
 @app.post("/login")
-def read_item(login: str, password):
+def read_item(chat_id: str, login: str, password):
     try:
+        print(chat_id, login, password)
         api = Linkedin(login, password)
-        profile_lite = api.get_user_profile(use_cache=False)
-        profile_basic = api.get_profile(profile_lite["miniProfile"]["publicIdentifier"])
-
-        users[login]=api
+        users[chat_id]=api
         print(users)
 
         # occupation = profile_lite["miniProfile"]["occupation"]
@@ -37,18 +36,28 @@ def read_item(login: str, password):
     except :
         return {"status": "false"}
 
-@app.post("/generate_content_plan")
-def generate_content_plan(profession, experience):
-    task = 'Week: 1; suggested day to post: Monday; suggested length: 550; format: how-to post; suggested heading:'
-    # form = request.get_json()
-    # profession = form["profession"]
-    # experience = form["experience"]
-    # length = form.get("n", 5)
-    # response = openai.Completion.create(
-    # model="text-davinci-003",
-    # prompt=prompt_gen_plan(profession=profession, experience=experience, task=task, n=length),
-    # temperature=0.6,
-    # max_tokens=3100,
-    # )
-    # print(f'OpenAI response: {response.choices}')
-    # return jsonify({"response": f'{task} {response.choices[0].text}'})
+def prompt_gen_plan(profession, experience, task, n=5):
+    return f"""Brief review of my LinkedIn profile: I am {profession}.
+My experience: {experience}.
+You will create a content plan (headings only) for my LinkedIn blog.
+Suggest {n} LinkedIn post topics based on my profession and background, do not use companies I worked for, use different formats.
+{task}"""
+
+@app.get("/generate_content_plan")
+def generate_content_plan(chat_id):
+   task = 'Week: 1; suggested day to post: Monday; suggested length: 550; format: how-to post; suggested heading:'
+   profile_lite = users[chat_id].get_user_profile(use_cache=False)
+   profile_basic = users[chat_id].get_profile(profile_lite["miniProfile"]["publicIdentifier"])
+   
+   occupation = profile_lite["miniProfile"]["occupation"]
+   experience = profile_basic["experience"]
+
+   response = openai.Completion.create(
+        model="text-davinci-003",
+        prompt=prompt_gen_plan(profession=occupation, experience=experience, task=task, n=5),
+        temperature=0.6,
+        max_tokens=3100,
+    )
+   
+   print(f'OpenAI response: {response.choices}')
+   return {"response": f'{task} {response.choices[0].text}'}

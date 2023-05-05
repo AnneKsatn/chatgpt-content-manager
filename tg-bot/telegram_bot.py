@@ -78,7 +78,13 @@ async def mark_lecture(message: types.Message, state: FSMContext):
     await state.update_data(password=message.text.lower())
 
     auth_data = await state.get_data()
-    status = await data_fetcher.login(auth_data["login"], auth_data["password"])
+    status = await data_fetcher.login(message.chat.id, auth_data["login"], auth_data["password"])
+
+    await bot.send_message(
+                message.chat.id, 
+                 auth_data["password"])
+
+    print(status)
 
     if(status["status"] == "true"):
         await bot.send_message(
@@ -91,12 +97,9 @@ async def mark_lecture(message: types.Message, state: FSMContext):
 
 @dp.message_handler(commands='generate_content_plan')
 async def command_start(message: types.Message):
-    
-
+    content_plan = await data_fetcher.generate_content_plan(message.chat.id)
     await bot.send_message(message.chat.id, 
-    'Привет! Рад тебя видеть!\n\n' 
-    'Пожалуйста, предоставь доступ к своему Linkedin, чтобы я мог составить план контента.',
-                         reply_markup=keyboard)
+    'Контент-план: \n' + content_plan)
     
 
 # @dp.message_handler(content_types=['contact'])
