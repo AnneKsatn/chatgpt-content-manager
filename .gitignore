@@ -1,2 +1,5 @@
-/tg-bot/venv
-/fastapi/venv
+tg-bot/venv
+fastapi/venv
+tg-bot/credentials.json
+fastapi/cert.pem
+fastapi/key.pem
