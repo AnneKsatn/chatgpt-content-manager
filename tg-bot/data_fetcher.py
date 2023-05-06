@@ -1,7 +1,14 @@
-import json
 import aiohttp
 from local_settings import BACKEND_API
-from linkedin_api import Linkedin
+
+
+async def get_info(chat_id):
+    async with aiohttp.ClientSession() as session: 
+        api_url = BACKEND_API + f"/get_info?chat_id={chat_id}"
+
+        async with session.post(api_url) as response:
+            return await response.json()
+
 
 async def login(chat_id, login, password):
     async with aiohttp.ClientSession() as session: 
