@@ -1,29 +1,29 @@
-from typing import Union
-from requests_oauthlib import OAuth2Session
-from .local_settings import LINKEDIN_CLIENT_ID, LINKEDIN_CLIENT_SECRET
-from fastapi import FastAPI
-import requests
-from linkedin_api import Linkedin
 import openai
+import requests
 
+from fastapi import FastAPI
+
+from .db import linkedin_api, users_db
+from .local_settings import LINKEDIN_CLIENT_ID, LINKEDIN_CLIENT_SECRET
 
 app = FastAPI()
 
 scope = ['profile']
 scope = ['r_basicprofile']
-redirect_url = 'https://localhost:8432/token'
+redirect_url = 'https://localhost:8432/token?chat_id={}'
 authorization_base_url = 'https://www.linkedin.com/oauth/v2/authorization'
 token_url = 'https://www.linkedin.com/oauth/v2/accessToken'
-linkedin = OAuth2Session(LINKEDIN_CLIENT_ID, redirect_uri=redirect_url, scope=scope)
+
 
 def headers(access_token):
     gen_headers = {
-    'Authorization': f'Bearer {access_token}',
-    'cache-control': 'no-cache',
-    'X-Restli-Protocol-Version': '2.0.0',
-    'Connection': 'Keep-Alive'
+        'Authorization': f'Bearer {access_token}',
+        'cache-control': 'no-cache',
+        'X-Restli-Protocol-Version': '2.0.0',
+        'Connection': 'Keep-Alive'
     }
     return gen_headers
+
 
 def get_user_info(headers):
     response = requests.get(' https://api.linkedin.com/v2/me', headers=headers)
@@ -31,29 +31,27 @@ def get_user_info(headers):
     return user_info
 
 
-def get_access_token(auth_code):
+def get_tokens(chat_id, auth_code):
     access_token_url = 'https://www.linkedin.com/oauth/v2/accessToken'
 
     data = {
         'grant_type': 'authorization_code',
         'code': auth_code,
-        'redirect_uri': redirect_url,
+        'redirect_uri': redirect_url.format(chat_id),
         'client_id': LINKEDIN_CLIENT_ID,
-        'client_secret': LINKEDIN_CLIENT_SECRET
-        }
+        'client_secret': LINKEDIN_CLIENT_SECRET,
+    }
 
     response = requests.post(access_token_url, data=data, timeout=30)
     response = response.json()
 
     print(response)
     access_token = response['access_token']
+    refresh_token = response['refresh_token']
 
     print("access_token", access_token)
-
-    request_headers = headers(access_token)
-    user_info = get_user_info(request_headers)
-    print(user_info)
-    return user_info
+    print("refresh_token", refresh_token)
+    return {'access_token': access_token, 'refresh_token': refresh_token}
 users = {}
 
 
@@ -63,32 +61,34 @@ def read_root():
 
 
 @app.get("/token")
-def read_item(code: str):
-    # redirect_response = "https://localhost:8432/token?code=" + code
-    access_token = get_access_token(code)
-    # linkedin.fetch_token(
-    #     token_url, 
-    #     client_secret=LINKEDIN_CLIENT_SECRET,
-    #     include_client_id=True,
-    #     authorization_response=redirect_response)
-
-    # r = linkedin.get('https://api.linkedin.com/v2/me')
-    return {"code": access_token}
+def read_item(chat_id: str, code: str):
+    tokens = get_tokens(chat_id, code)
+    users_db.add_access_token(chat_id, **tokens)
+    return {'success': True}
 
 
-@app.post("/login")
-def read_item(chat_id: str, login: str, password):
-    try:
-        print(chat_id, login, password)
-        api = Linkedin(login, password)
-        users[chat_id]=api
-        print(users)
+@app.get("/get_info")
+def get_info(chat_id):
+    tokens = users_db.get_access_token(chat_id)
+    request_headers = headers(tokens['access_token'])
+    user_info = get_user_info(request_headers)
+    print(user_info)
+    # linkedin_api.get_profile()
 
-        # occupation = profile_lite["miniProfile"]["occupation"]
-        # experience = profile_basic["experience"]
-        return {"status": "true"}
-    except :
-        return {"status": "false"}
+
+# @app.post("/login")
+# def read_item(chat_id: str, login: str, password):
+#     try:
+#         print(chat_id, login, password)
+#         api = Linkedin(login, password)
+#         users[chat_id] = api
+#         print(users)
+
+#         # occupation = profile_lite["miniProfile"]["occupation"]
+#         # experience = profile_basic["experience"]
+#         return {"status": "true"}
+#     except :
+#         return {"status": "false"}
 
 def prompt_gen_plan(profession, experience, task, n=5):
     return f"""Brief review of my LinkedIn profile: I am {profession}.

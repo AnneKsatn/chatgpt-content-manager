@@ -1,109 +1,67 @@
-from email import message
-from numbers import Number
-from aiogram import Bot, types
-from aiogram.dispatcher import Dispatcher
-from aiogram.utils import executor
-from aiogram.dispatcher.filters import Text
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ParseMode
-# import aioschedule
-import asyncio
-from keyboards import kb_student, kb_main, kb_moodle
-from states import FSMComplaint, FSMEnrollmentError, FSMLinkedinLogin
-from aiogram.contrib.fsm_storage.memory import MemoryStorage
-from aiogram.dispatcher import FSMContext
-from aiogram.dispatcher.filters.state import State, StatesGroup
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
-import re
-import data_fetcher
 import os
+import pprint
 
-from states.FSMMeetingError import FSMMeetingError
-from states.FSMPlatformFeedback import FSMPlatformFeedback
-
+import data_fetcher
+from aiogram import Bot, types
+from aiogram.contrib.fsm_storage.memory import MemoryStorage
+from aiogram.dispatcher import Dispatcher, FSMContext
+from aiogram.dispatcher.filters import Text
+from aiogram.utils import executor
+from linkedin_api import Linkedin
 from local_settings import LINKEDIN_CLIENT_ID, LINKEDIN_CLIENT_SECRET
 from requests_oauthlib import OAuth2Session
-import pprint
-import webbrowser
 
-from linkedin_api import Linkedin
-
-import json
-import random
-import requests
-import string
-scope = ['r_liteprofile']
-redirect_url = 'https://localhost:8432/token'
-authorization_base_url = 'https://www.linkedin.com/oauth/v2/authorization'
-token_url = 'https://www.linkedin.com/oauth/v2/accessToken'
-linkedin = OAuth2Session(
-    LINKEDIN_CLIENT_ID, redirect_uri=redirect_url, scope=scope)
+scope = ["r_liteprofile"]
+redirect_url = "https://localhost:8432/token?chat_id={}"
+authorization_base_url = "https://www.linkedin.com/oauth/v2/authorization"
+token_url = "https://www.linkedin.com/oauth/v2/accessToken"
+linkedin = lambda chat_id: OAuth2Session(LINKEDIN_CLIENT_ID, redirect_uri=redirect_url.format(chat_id), scope=scope)
 
 
 storage = MemoryStorage()
-bot = Bot(token=os.getenv('TOKEN'))
+bot = Bot(token=os.getenv("TOKEN"))
 dp = Dispatcher(bot, storage=storage)
 
-# urllb = InlineKeyboardMarkup(row_width=2)
-# urlButton = InlineKeyboardButton(text='ссылка 1', url='https://www.youtube.com/')
-# urlButton2 = InlineKeyboardButton(text='ссылка 2', url='https://www.youtube.com/')
-# urllb.add(urlButton, urlButton2)
-
 ##################### АВТОРИАЗАЦИЯ ########################
 
 
-##################### АВТОРИАЗАЦИЯ ########################
-
-@dp.message_handler(commands='start')
+@dp.message_handler(commands="start")
 async def command_start(message: types.Message):
-
     keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
     button_phone = types.KeyboardButton(text="Linkedin аутентификация")
     keyboard.add(button_phone)
 
-    await bot.send_message(message.chat.id,
-                           'Привет! Рад тебя видеть!\n\n'
-                           'Пожалуйста, предоставь доступ к своему Linkedin, чтобы я мог составить план контента.',
-                           reply_markup=keyboard)
+    await bot.send_message(
+        message.chat.id,
+        "Привет! Рад тебя видеть!\n\n"
+        "Пожалуйста, предоставь доступ к своему Linkedin, чтобы я мог составить план контента.",
+        reply_markup=keyboard,
+    )
 
 
-@dp.message_handler(Text(startswith='Linkedin аутентификация'))
+@dp.message_handler(Text(startswith="Linkedin аутентификация"))
 async def contact(message):
-    authorization_url, state = linkedin.authorization_url(
-        authorization_base_url)
-    await bot.send_message(message.chat.id, f'Для авторизации подтвердите доступ для приложения: {authorization_url}')
+    authorization_url, state = linkedin(message.chat.id).authorization_url(authorization_base_url)
+    keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
+    keyboard.add(types.KeyboardButton(text="Готово!"))
+
+    await bot.send_message(
+        message.chat.id,
+        f"Для авторизации подтвердите доступ для приложения: {authorization_url}",
+        reply_markup=keyboard,
+    )
 
 
-@dp.message_handler(state=FSMLinkedinLogin.password)
-async def mark_lecture(message: types.Message, state: FSMContext):
-
-    linkedin.fetch_token(token_url, client_secret=LINKEDIN_CLIENT_SECRET,
-                     include_client_id=True,
-                     authorization_response=redirect_response)
-
-    r = linkedin.get('https://api.linkedin.com/v2/me')
-    print(r.content)
-
-    pp = pprint.PrettyPrinter(indent=4)
-    pp.pprint(r.json())
-    await bot.send_message(message.chat.id, auth_data["password"])
-
-    print(status)
-
-    if (status["status"] == "true"):
-        await bot.send_message(
-            message.chat.id,
-            "Аутентификация прошла успешно",
-            reply_markup=kb_main
-        )
-    else:
-        await message.reply("Ошибка аутентификации")
+@dp.message_handler(Text(startswith="Готово"))
+async def check_profile(message: types.Message, state: FSMContext):
+    user_info = await data_fetcher.get_info(message.chat.id)
+    print(user_info)
 
 
-@dp.message_handler(commands='generate_content_plan')
+@dp.message_handler(commands="generate_content_plan")
 async def command_start(message: types.Message):
     content_plan = await data_fetcher.generate_content_plan(message.chat.id)
-    await bot.send_message(message.chat.id,
-                           'Контент-план: \n' + content_plan)
+    await bot.send_message(message.chat.id, "Контент-план: \n" + content_plan)
 
 
 ##################### ГЛАВНЫЙ МАКЕТ ########################
@@ -333,6 +291,7 @@ async def command_start(message: types.Message):
 #     while True:
 #         await aioschedule.run_pending()
 #         await asyncio.sleep(1)
+
 
 async def on_startup(_):
     print("Bot started")
