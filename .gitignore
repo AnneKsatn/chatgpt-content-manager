@@ -8,3 +8,4 @@ fastapi/key.pem
 */.vscode
 */.venv
 .venv
+fastapi/app/credentials.json

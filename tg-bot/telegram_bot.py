@@ -1,42 +1,108 @@
+import logging
 import os
-import pprint
+import re
 
 import data_fetcher
 from aiogram import Bot, types
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.dispatcher import Dispatcher, FSMContext
 from aiogram.dispatcher.filters import Text
+from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.utils import executor
-from linkedin_api import Linkedin
-from local_settings import LINKEDIN_CLIENT_ID, LINKEDIN_CLIENT_SECRET
+from local_settings import LINKEDIN_CLIENT_ID
 from requests_oauthlib import OAuth2Session
 
-scope = ["r_liteprofile"]
+scope = ["r_liteprofile", "w_member_social"]
 redirect_url = "https://localhost:8432/token?chat_id={}"
 authorization_base_url = "https://www.linkedin.com/oauth/v2/authorization"
 token_url = "https://www.linkedin.com/oauth/v2/accessToken"
 linkedin = lambda chat_id: OAuth2Session(LINKEDIN_CLIENT_ID, redirect_uri=redirect_url.format(chat_id), scope=scope)
-
+ACCOUNT_REGEXP = r'((http(s)?:\/\/)?(www\.)?linkedin\.com\/in\/)?([A-Za-z0-9_.-]+)'
 
 storage = MemoryStorage()
 bot = Bot(token=os.getenv("TOKEN"))
 dp = Dispatcher(bot, storage=storage)
+
+
+# States
+class Form(StatesGroup):
+    account = State()
+    gen_plan = State()
+
 
 ##################### АВТОРИАЗАЦИЯ ########################
 
 
 @dp.message_handler(commands="start")
 async def command_start(message: types.Message):
-    keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
-    button_phone = types.KeyboardButton(text="Linkedin аутентификация")
-    keyboard.add(button_phone)
+    # keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
+    # button_phone = types.KeyboardButton(text="Linkedin аутентификация")
+    # keyboard.add(button_phone)
 
+    await Form.account.set()
     await bot.send_message(
         message.chat.id,
-        "Привет! Рад тебя видеть!\n\n"
-        "Пожалуйста, предоставь доступ к своему Linkedin, чтобы я мог составить план контента.",
-        reply_markup=keyboard,
+        "Nice to meet you!\n\n"
+        "Please, send me your LinkedIn profile link, like this: https://www.linkedin.com/in/<profile_id>",
+        # reply_markup=keyboard,
     )
+
+
+@dp.message_handler(state=Form.account)
+async def get_account(message: types.Message, state: FSMContext):
+    logging.info(message)
+    parsed = re.search(ACCOUNT_REGEXP, message.text)
+    account_id = parsed.group(5)
+    with state.proxy() as data:
+        data['raw_account'] = message.text
+        logging.info(f'Parsed: {message.text} -> {account_id}')
+        data['account'] = account_id
+    user_info = await data_fetcher.get_info(message.chat.id, account_id)
+
+    await Form.next()
+    keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
+    keyboard.add(types.KeyboardButton(text="Yes, it's me!"))
+    await bot.send_message(f"Hello, {user_info['name']}! Is it you?", reply_markup=keyboard)
+
+
+@dp.message_handler(state=Form.gen_plan)
+async def gen_plan(message: types.Message, state: FSMContext):
+    keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
+    button_phone = types.KeyboardButton(text="Generate post")
+    keyboard.add(button_phone)
+    state.finish()
+    content_plan = await data_fetcher.generate_content_plan(message.chat.id)
+    await bot.send_message(f'Here is the content plan I created for you:\n{content_plan}',
+                           reply_markup=keyboard)
+
+
+@dp.message_handler(lambda message: message.text.startswith('Generate post') or message.text.startswith('Next post'))
+async def next_post(message: types.Message, state: FSMContext):
+    keyboard = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
+    button_post = types.KeyboardButton(text="Next post")
+    keyboard.add(button_post)
+    button_publish = types.KeyboardButton(text="Publish")
+    keyboard.add(button_publish)
+    post = await data_fetcher.generate_next_post(message.chat.id)
+    await bot.send_message(post, reply_markup=keyboard)
+
+
+@dp.message_handler(lambda message: message.text.lower().startswith('publish'), commands=['check_auth'])
+async def publish_post(message: types.Message, state: FSMContext):
+    is_auth = await data_fetcher.check_auth(message.chat.id)
+    if not is_auth['is_auth']:
+        keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
+        button_auth = types.KeyboardButton(text="/check_auth")
+        keyboard.add(button_auth)
+        authorization_url, state = linkedin(message.chat.id).authorization_url(authorization_base_url)
+        await bot.send_message(f'Provide access for the application, follow the link: {authorization_url}',
+                               reply_markup=keyboard)
+    else:
+        keyboard = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
+        button_post = types.KeyboardButton(text="Next post")
+        keyboard.add(button_post)
+        is_posted = await data_fetcher.publish_post(message.chat.id)
+        await bot.send_message('Published!' if is_posted else 'Failed to publish :(', reply_markup=keyboard)
 
 
 @dp.message_handler(Text(startswith="Linkedin аутентификация"))
