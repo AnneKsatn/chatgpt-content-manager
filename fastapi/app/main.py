@@ -1,27 +1,31 @@
 import logging
+from functools import lru_cache
 
 import openai
 import requests
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 
 from .db import linkedin_api, users_db
-from .local_settings import LINKEDIN_CLIENT_ID, LINKEDIN_CLIENT_SECRET
+from .local_settings import (LINKEDIN_CLIENT_ID, LINKEDIN_CLIENT_SECRET,
+                             OPENAI_KEY)
 
 app = FastAPI()
 
+openai.api_key = OPENAI_KEY
 scope = ['profile', 'r_liteprofile', 'w_member_social']
 redirect_url = 'https://localhost:8432/token?chat_id={}'
 authorization_base_url = 'https://www.linkedin.com/oauth/v2/authorization'
 token_url = 'https://www.linkedin.com/oauth/v2/accessToken'
 
 
-def headers(access_token):
+def get_headers(access_token):
     gen_headers = {
         'Authorization': f'Bearer {access_token}',
         'cache-control': 'no-cache',
         'X-Restli-Protocol-Version': '2.0.0',
-        'Connection': 'Keep-Alive'
+        'Connection': 'Keep-Alive',
+        'LinkedIn-Version': '202303'
     }
     return gen_headers
 
@@ -55,13 +59,36 @@ def get_tokens(chat_id, auth_code):
     return {'access_token': access_token}
 
 
-def publish_post(chat_id, content):
+def api_get(token, url):
+    gen_headers = {
+        'Authorization': f'Bearer {token}',
+        'cache-control': 'no-cache',
+        'X-Restli-Protocol-Version': '2.0.0',
+        'Connection': 'Keep-Alive'
+    }
+
+    response = requests.get(url, headers=gen_headers, timeout=30)
+    return response
+
+
+@lru_cache
+def get_user_info(chat_id):
     access_token = users_db.get_access_token(chat_id)[0]['access_token']
+    headers = get_headers(access_token)
+    self_info_url = 'https://api.linkedin.com/v2/me'
+    user_info = requests.get(self_info_url, headers=headers, timeout=30)
+    return user_info.json()
+
+
+def send_publish_post(chat_id, content):
+    user_id = get_user_info(chat_id)['id']
+
+    access_token = users_db.get_access_token(chat_id)[0]['access_token']
+    headers = get_headers(access_token)
     url = 'https://api.linkedin.com/rest/posts'
-    headers = headers(access_token)
     payload = {
-        "author": "urn:li:organization:5515715",
-        "commentary": {content},
+        "author": f"urn:li:person:{user_id}",
+        "commentary": content,
         "visibility": "PUBLIC",
         "distribution": {
             "feedDistribution": "MAIN_FEED",
@@ -71,10 +98,11 @@ def publish_post(chat_id, content):
         "lifecycleState": "PUBLISHED",
         "isReshareDisabledByAuthor": False
     }
-    resp = requests.post(url=url, headers=headers, data=payload)
-    if resp.status_code != 200:
+    resp = requests.post(url=url, headers=headers, json=payload)
+    if resp.status_code >= 300 or resp.status_code < 200:
         raise RuntimeError(f'Failed to publish post: {resp.text}')
-    return True
+    print(resp.json())
+    return resp.json()
 
 
 @app.get("/")
@@ -91,9 +119,6 @@ def read_item(chat_id: str, code: str):
 
 @app.get("/get_info")
 def get_info(chat_id, account_id):
-    # tokens = users_db.get_access_token(chat_id)
-    # request_headers = headers(tokens['access_token'])
-    # user_info = get_user_info(request_headers)
     data = linkedin_api.get_profile(account_id)
     logging.debug(f'Fetched info for `{account_id}`')
     users_db.add_info(chat_id, data)
@@ -119,22 +144,40 @@ def format_experience(experience_list):
     out = ''
     for exp in experience_list:
         start_date = f"{exp['timePeriod']['startDate']['year']}-{exp['timePeriod']['startDate']['month']}"
-        end_date = "now" if not exp['timePeriod'].get('endDate', None) \
-            else f"{exp['timePeriod']['endDate']['year']}-{exp['endDate']['startDate']['month']}"
+        end_date = 'now'
+        if 'endDate' in exp['timePeriod']:
+            end_date = f"{exp['timePeriod']['endDate']['year']}-{exp['timePeriod']['endDate']['month']}"
         out += 'Company: {company}; dates: {dates}; position: {position}; description: {descr}. '.format(
             company=f"{exp['companyName']} ({exp['geoLocationName']})",
             dates=f"{start_date} - {end_date}",
             position=exp['title'],
-            descr=exp["description"],
+            descr=exp.get("description", "nothing"),
         )
     return out
 
 
+@app.get("/can_generate_plan")
+def check_content_plan(chat_id):
+    plan = users_db.get_last_plan(chat_id)
+    if plan is None:
+        return {'can_generate': True}
+
+    last_id = int(users_db.get_last_post_by_plan(chat_id, plan_date=plan['date']))
+    max_plan_id = max(int(k) for k in plan['plan'].keys())
+    next_post_id = last_id + 1
+    if next_post_id > max_plan_id:
+        return {'can_generate': True}
+
+    return {'can_generate': False, 'last_plan': {'data': plan['plan'], 'last_generated_week': last_id}}
+
+
 @app.get("/generate_content_plan")
 def generate_content_plan(chat_id):
-    data = users_db.get_info(chat_id)
-    occupation = data['headline']
-    experience = format_experience(data['experience'])
+    assert check_content_plan(chat_id)['can_generate']
+
+    user_data = users_db.get_info(chat_id)[0]
+    occupation = user_data['info']['headline']
+    experience = format_experience(user_data['info']['experience'])
 
     task = 'Week: 1; suggested day to post: Monday; suggested length: 550; format: how-to post; suggested heading:'
     response = openai.Completion.create(
@@ -145,8 +188,9 @@ def generate_content_plan(chat_id):
     )
 
     plan = f"{task} {response.choices[0].text}"
+    print(plan)
     kw = {}
-    for line in plan.split('\n\n'):
+    for line in plan.split('\n'):
         if not line:
             continue
         data = {}
@@ -160,23 +204,30 @@ def generate_content_plan(chat_id):
         kw[data['week']] = data
 
     users_db.add_plan(chat_id, kw)
+    print(kw)
     return {"response": plan}
 
 
 @app.get('/generate_next_post')
 def generate_next_post(chat_id):
-    data = users_db.get_info(chat_id)
-    occupation = data['headline']
-    experience = format_experience(data['experience'])
+    user_data = users_db.get_info(chat_id)[0]
+    occupation = user_data['info']['headline']
+    experience = format_experience(user_data['info']['experience'])
 
-    plan = users_db.get_plan(chat_id)
-    last_id = users_db.get_last_post_id(chat_id)
-    max_plan_id = max(plan['plan'].keys())
+    plan = users_db.get_last_plan(chat_id)
+    if not plan:
+        raise HTTPException(status_code=400, detail='Plan not found')
+
+    plan_date = plan.get('date', '0')
+    plan = plan['plan']
+    last_id = int(users_db.get_last_post_by_plan(chat_id, plan_date=plan_date))
+    max_plan_id = max(int(k) for k in plan.keys())
     next_post_id = last_id + 1
     if next_post_id > max_plan_id:
-        raise RuntimeError('Failed to create post, plan has ended')
+        raise HTTPException(status_code=409, detail='Failed to create post, plan has ended')
 
-    v = plan[next_post_id]
+    logging.info(f'{chat_id}: {plan}')
+    v = plan[str(next_post_id)]
     topic = v['heading']
     length = v['length']
     post_format = v['format']
@@ -216,8 +267,8 @@ def generate_next_post(chat_id):
             body += line + '\n\n'
 
     header = header.strip(" \n").strip('"')
-    content = f'{header}\n{body.strip()}'
-    users_db.add_post(next_post_id, content)
+    content = f'{header}\n\n{body.strip()}'
+    users_db.add_post(chat_id, plan_date, next_post_id, content)
     return {"response": content}
 
 
@@ -231,6 +282,6 @@ Only heading and body. The length must be {length}, pay attention to format.
 @app.get('/publish_post')
 def publish_post(chat_id):
     last_post_id = users_db.get_last_post_id(chat_id=chat_id)
-    post = users_db.get_post(chat_id, last_post_id)
-    posted = publish_post(chat_id, post)
+    post = users_db.get_post(chat_id, last_post_id)[0]
+    posted = send_publish_post(chat_id, post['post'])
     return {'is_posted': posted}

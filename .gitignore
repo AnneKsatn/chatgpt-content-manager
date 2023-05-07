@@ -8,4 +8,6 @@ fastapi/key.pem
 */.vscode
 */.venv
 .venv
+fastapi/app/__pycache__/
 fastapi/app/credentials.json
+fastapi/dbs/*

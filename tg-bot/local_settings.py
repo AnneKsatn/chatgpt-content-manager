@@ -1,6 +1,6 @@
 import json
 
-BACKEND_API = "http://localhost:8432"
+BACKEND_API = "https://localhost:8432"
 LINKEDIN_CLIENT_ID = "78ydgx7xxjf0dz"
 LINKEDIN_CLIENT_SECRET = "DArwc9bJkfMfKvTY"
 

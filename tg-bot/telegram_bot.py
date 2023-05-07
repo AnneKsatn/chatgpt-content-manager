@@ -43,8 +43,7 @@ async def command_start(message: types.Message):
     await bot.send_message(
         message.chat.id,
         "Nice to meet you!\n\n"
-        "Please, send me your LinkedIn profile link, like this: https://www.linkedin.com/in/<profile_id>",
-        # reply_markup=keyboard,
+        "Please, send me your LinkedIn profile link, like this: `https://www.linkedin.com/in/<profile_id>`",
     )
 
 
@@ -53,222 +52,81 @@ async def get_account(message: types.Message, state: FSMContext):
     logging.info(message)
     parsed = re.search(ACCOUNT_REGEXP, message.text)
     account_id = parsed.group(5)
-    with state.proxy() as data:
-        data['raw_account'] = message.text
-        logging.info(f'Parsed: {message.text} -> {account_id}')
-        data['account'] = account_id
     user_info = await data_fetcher.get_info(message.chat.id, account_id)
 
     await Form.next()
     keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
     keyboard.add(types.KeyboardButton(text="Yes, it's me!"))
-    await bot.send_message(f"Hello, {user_info['name']}! Is it you?", reply_markup=keyboard)
+    print(user_info)
+    await bot.send_message(message.chat.id, f"Hello, {user_info['fullName']}! Is it you?", reply_markup=keyboard)
 
 
 @dp.message_handler(state=Form.gen_plan)
+@dp.message_handler(commands=['generate_plan'])
 async def gen_plan(message: types.Message, state: FSMContext):
     keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
     button_phone = types.KeyboardButton(text="Generate post")
     keyboard.add(button_phone)
-    state.finish()
+
+    can_generate, plan = await data_fetcher.can_generate_plan(message.chat.id)
+    if not can_generate:
+        await bot.send_message(message.chat.id, f'Cannot generate content plan as you already have one: {plan}',
+                               reply_markup=keyboard)
+        return
+
+    await bot.send_message(message.chat.id, 'Generating content plan for you...')
+    await state.finish()
     content_plan = await data_fetcher.generate_content_plan(message.chat.id)
-    await bot.send_message(f'Here is the content plan I created for you:\n{content_plan}',
+    await bot.send_message(message.chat.id,
+                           f"Here is the content plan I created for you:\n{content_plan['response']}",
                            reply_markup=keyboard)
 
 
 @dp.message_handler(lambda message: message.text.startswith('Generate post') or message.text.startswith('Next post'))
 async def next_post(message: types.Message, state: FSMContext):
+    await bot.send_message(message.chat.id, 'Generating next post...')
+
     keyboard = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
     button_post = types.KeyboardButton(text="Next post")
     keyboard.add(button_post)
-    button_publish = types.KeyboardButton(text="Publish")
+    button_publish = types.KeyboardButton(text="/publish")
     keyboard.add(button_publish)
+
     post = await data_fetcher.generate_next_post(message.chat.id)
-    await bot.send_message(post, reply_markup=keyboard)
+    if post.get('error', None):
+        newposts_keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
+        newposts_keyboard.add(types.KeyboardButton(text='/generate_plan'))
+        await bot.send_message(message.chat.id, 'Content plan has ended, generate new posts?',
+                               reply_markup=newposts_keyboard)
+    else:
+        await bot.send_message(message.chat.id, post['response'], reply_markup=keyboard)
 
 
-@dp.message_handler(lambda message: message.text.lower().startswith('publish'), commands=['check_auth'])
+@dp.message_handler(commands=['check_auth', 'publish'])
 async def publish_post(message: types.Message, state: FSMContext):
+    await bot.send_message(message.chat.id, 'Checking access...')
     is_auth = await data_fetcher.check_auth(message.chat.id)
     if not is_auth['is_auth']:
         keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
         button_auth = types.KeyboardButton(text="/check_auth")
         keyboard.add(button_auth)
         authorization_url, state = linkedin(message.chat.id).authorization_url(authorization_base_url)
-        await bot.send_message(f'Provide access for the application, follow the link: {authorization_url}',
+        await bot.send_message(message.chat.id,
+                               f'Provide access for the application, follow the link: {authorization_url}',
                                reply_markup=keyboard)
     else:
         keyboard = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
         button_post = types.KeyboardButton(text="Next post")
         keyboard.add(button_post)
         is_posted = await data_fetcher.publish_post(message.chat.id)
-        await bot.send_message('Published!' if is_posted else 'Failed to publish :(', reply_markup=keyboard)
+        await bot.send_message(message.chat.id, 'Published!' if is_posted else 'Failed to publish :(', reply_markup=keyboard)
 
 
-@dp.message_handler(Text(startswith="Linkedin аутентификация"))
-async def contact(message):
-    authorization_url, state = linkedin(message.chat.id).authorization_url(authorization_base_url)
+@dp.message_handler(state='*')
+async def error(message):
     keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
-    keyboard.add(types.KeyboardButton(text="Готово!"))
-
-    await bot.send_message(
-        message.chat.id,
-        f"Для авторизации подтвердите доступ для приложения: {authorization_url}",
-        reply_markup=keyboard,
-    )
-
-
-@dp.message_handler(Text(startswith="Готово"))
-async def check_profile(message: types.Message, state: FSMContext):
-    user_info = await data_fetcher.get_info(message.chat.id)
-    print(user_info)
-
-
-@dp.message_handler(commands="generate_content_plan")
-async def command_start(message: types.Message):
-    content_plan = await data_fetcher.generate_content_plan(message.chat.id)
-    await bot.send_message(message.chat.id, "Контент-план: \n" + content_plan)
-
-
-##################### ГЛАВНЫЙ МАКЕТ ########################
-
-# @dp.message_handler(commands='help')
-# async def command_start(message: types.Message):
-#     await message.answer("Чем я могу помочь?", reply_markup=kb_main)
-
-##################### ГЛАВНЫЙ МАКЕТ: MOODLE ########################
-
-# @dp.message_handler(commands='moodle')
-# async def professors(message: types.Message):
-#     await message.answer("Чем я могу помочь?", reply_markup=kb_moodle)
-
-# @dp.message_handler(Text(startswith='ошибка авторизации'))
-# async def professors(message: types.Message):
-
-#     admins = await data_fetcher.get_admins()
-#     user = await data_fetcher.get_user_by_chat(message.chat.id)
-
-#     print(user)
-#     for admin in admins:
-#         await bot.send_message(
-#             admin['chat_id'],
-#             "Ошибка авторизации на платформе у пользователя \n" + user['name'] + " " + user['phone']
-#             )
-
-#     await message.answer(
-#         "Специалисты проверят в течение часа - двух и сбросят пароль на исходный: 123456a* (a печатается латинским шрифтом). Если доступ к платформе нужно получить срочно, напиши куратору группы.",
-#         reply_markup=kb_main)
-
-# @dp.message_handler(Text(startswith='платформа недоступна'))
-# async def professors(message: types.Message):
-
-#     admins = await data_fetcher.get_admins()
-#     user = await data_fetcher.get_user_by_chat(message.chat.id)
-
-#     for admin in admins:
-#         await bot.send_message(
-#             admin['chat_id'],
-#             "Платформа недоступна у пользоавателя \n" + user['name'] + " " + user['phone']
-#             )
-
-#     await message.answer(
-#         "Передал специалисту ошибку, платформу уже восстанавливают. Если у тебя сейчас занятие, попробуй договриться с преподавателем провести занятие на другом ресурсе (zoom, meets и т.д)",
-#         reply_markup=kb_main)
-
-
-##################### ГЛАВНЫЙ МАКЕТ: РАСПИСАНИЕ ########################
-
-# @dp.message_handler(commands=['shedule'])
-# async def url_command(message: types.Message):
-
-#     res = await data_fetcher.get_shedule()
-#     week_days = {1: "Понедельник", 2: "Вторник",3: "Среда", 4: "Четверг", 5: "Пятница", 6: "Суббота"}
-
-#     message_text="Расписание:\n"
-#     current_day = -1
-
-#     for course in res:
-#         if(course['week_day'] > current_day):
-
-#             current_day = course['week_day']
-#             message_text = message_text + "\n<b><u>" + week_days[current_day] + "</u></b>\n\n"
-
-#         message_text = message_text + course["title"] + "\n" + course["day_time"] + " " + course["teacher"] + "\n\n"
-
-
-#     await bot.send_message(
-#         message.chat.id,
-#         text = message_text,
-#         parse_mode=ParseMode.HTML
-#     )
-
-
-##################### Обработка жалоб ########################
-
-# @dp.message_handler(commands='complaint', state=None)
-# async def professors(message: types.Message):
-
-#     await FSMComplaint.complaint.set()
-#     await message.reply('Опиши свою жалобу одним сообщением и я передам ее администрации')
-
-
-# @dp.message_handler(state=FSMComplaint.complaint)
-# async def mark_lecture(message: types.Message, state: FSMContext):
-#     async with state.proxy() as data:
-#         data['complaint'] = message.text
-#         await message.reply("Спасибо за обратную связь! Я передам в администрацию следующую жалобу: \n\n" + message.text)
-
-#     await state.finish()
-
-
-##################### СБОР ФИДБЕКА О ОНЛАЙН-ЛЕКТОРИИ ########################
-
-# def create_markup(lesson_id):
-#     lecture_marks_markup = InlineKeyboardMarkup(row_width=5).add(
-#         InlineKeyboardButton(text="10", callback_data="lecture_mark_10_" + lesson_id),
-#         InlineKeyboardButton(text="9", callback_data="lecture_mark_9_" + lesson_id),
-#         InlineKeyboardButton(text="8", callback_data="lecture_mark_8_" + lesson_id),
-#         InlineKeyboardButton(text="7", callback_data="lecture_mark_7_" + lesson_id),
-#         InlineKeyboardButton(text="6", callback_data="lecture_mark_6_" + lesson_id),
-#         InlineKeyboardButton(text="5", callback_data="lecture_mark_5_" + lesson_id),
-#         InlineKeyboardButton(text="4", callback_data="lecture_mark_4_" + lesson_id),
-#         InlineKeyboardButton(text="3", callback_data="lecture_mark_3_" + lesson_id),
-#         InlineKeyboardButton(text="2", callback_data="lecture_mark_2_" + lesson_id),
-#         InlineKeyboardButton(text="1", callback_data="lecture_mark_1_" + lesson_id))
-#     return lecture_marks_markup
-
-
-# @dp.callback_query_handler(Text(startswith='lecture_mark'))
-# async def mark_lecture(callback: types.CallbackQuery):
-#     res = int(callback.data.split('_')[2])
-#     lesson_id = callback.data.split('_')[3]
-
-
-# async def get_lectures_feedback(user, course):
-
-#         lesson = data_fetcher.get_lesson()
-
-#         if lesson['asynchronous_lectures']:
-
-#             text = 'К данному уроку нужно было пройти материал: \n\n'
-
-#             for lecture in lesson['asynchronous_lectures']:
-#                 text = text + lecture + "\n"
-
-
-#             await bot.send_message(
-#                 user['chat_id'],
-#                 text + "\n Помоги нам оценить качество и улучшить курс :)")
-
-#             await bot.send_message(
-#                 user['chat_id'],
-#                 'Оцени по 10-бальной шкале полезность лекции',
-#                 reply_markup=create_markup(lesson['_id']))
-
-#             await bot.send_message(
-#                 user['chat_id'],
-#                 'Оцени по 10-бальной шкале качество объяснения материала и понятность лекции',
-#                 reply_markup=create_markup(lesson['_id']))
+    keyboard.add(types.KeyboardButton(text="/generate_plan"))
+    await message.reply('Sorry, I did not understand your command.', reply_markup=keyboard)
 
 
 ##################### ОТПРАВЛЕНИЕ НАПОМИНАНИЙ О ПАРАХ ########################
