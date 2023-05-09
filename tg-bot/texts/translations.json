@@ -1,0 +1,29 @@
+{
+    "en": {
+        "start_cmd": "/start",
+        "start_message": "Hey there! 👋 I am AI MY BLOG bot. I aim to assist you with creating a content plan and posts for your LinkedIn.\n\nPlease, send me your LinkedIn profile link, like this: `https://www.linkedin.com/in/<profile_id>`",
+        "hello_message": "Hello, {fullName}! Is it you?",
+        "approve_message": "Yes, it's me!",
+
+        "content_plan_generated": "Generating content plan for you… It could take 1-5 minutes. Please kindly wait ⏳",
+        "content_plan_created": "Here is the content plan I created for you:\n{response}",
+        "generation_error": "Cannot generate content plan as you already have one:\n{plan}",
+
+        "offer_generate_post": "Tap “Generate post” if you want a new post from me!",
+        "generate_post": "Generate post",
+        "generate_plan_cmd": "/generate_plan",
+        "wait_for_post": "Generating next post... It could take up to 2 minutes. Please kindly wait ⏳",
+        "next_post": "Next post",
+        "generate_new_posts": "Content plan has ended, generate new posts?",
+
+        "publish": "/publish",
+        "publish_precaution": "AI MY BLOG DOESN’T keep any of your passwords. To post automatically please Log In to your LinkedIn with your main browser and provide the application the access to publish content for you",
+        "access_checking": "Checking access...",
+        "check_auth": "/check_auth",
+        "provide_access": "To provide access for the application, follow the link: {authorization_url} , then click /check_auth to continue with publication (WARNING: it will publish the post to your feed)",
+        "published": "Published!",
+        "failed_publish": "Failed to publish :(",
+
+        "not_understand": "Sorry, I did not understand your command."
+    }
+}

@@ -12,12 +12,14 @@ from aiogram.utils import executor
 from local_settings import LINKEDIN_CLIENT_ID
 from requests_oauthlib import OAuth2Session
 
+from .texts import translations
+
 scope = ["r_liteprofile", "w_member_social"]
 redirect_url = "https://localhost:8432/token?chat_id={}"
 authorization_base_url = "https://www.linkedin.com/oauth/v2/authorization"
 token_url = "https://www.linkedin.com/oauth/v2/accessToken"
 linkedin = lambda chat_id: OAuth2Session(LINKEDIN_CLIENT_ID, redirect_uri=redirect_url.format(chat_id), scope=scope)
-ACCOUNT_REGEXP = r'((http(s)?:\/\/)?(www\.)?linkedin\.com\/in\/)?([A-Za-z0-9_.-]+)'
+ACCOUNT_REGEXP = r'((http(s)?:\/\/)?(www\.)?linkedin\.com\/in\/)?([A-Za-z0-9_.-]+)(/)?'
 
 storage = MemoryStorage()
 bot = Bot(token=os.getenv("TOKEN"))
@@ -33,17 +35,12 @@ class Form(StatesGroup):
 ##################### АВТОРИАЗАЦИЯ ########################
 
 
-@dp.message_handler(commands="start")
+@dp.message_handler(commands=translations.start_cmd[1:])
 async def command_start(message: types.Message):
-    # keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
-    # button_phone = types.KeyboardButton(text="Linkedin аутентификация")
-    # keyboard.add(button_phone)
-
     await Form.account.set()
     await bot.send_message(
         message.chat.id,
-        "Nice to meet you!\n\n"
-        "Please, send me your LinkedIn profile link, like this: `https://www.linkedin.com/in/<profile_id>`",
+        translations.start_message
     )
 
 
@@ -56,77 +53,87 @@ async def get_account(message: types.Message, state: FSMContext):
 
     await Form.next()
     keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
-    keyboard.add(types.KeyboardButton(text="Yes, it's me!"))
+    keyboard.add(types.KeyboardButton(text=translations.approve_message))
     print(user_info)
-    await bot.send_message(message.chat.id, f"Hello, {user_info['fullName']}! Is it you?", reply_markup=keyboard)
-
-
-@dp.message_handler(state=Form.gen_plan)
-@dp.message_handler(commands=['generate_plan'])
-async def gen_plan(message: types.Message, state: FSMContext):
-    keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
-    button_phone = types.KeyboardButton(text="Generate post")
-    keyboard.add(button_phone)
-
-    can_generate, plan = await data_fetcher.can_generate_plan(message.chat.id)
-    if not can_generate:
-        await bot.send_message(message.chat.id, f'Cannot generate content plan as you already have one: {plan}',
-                               reply_markup=keyboard)
-        return
-
-    await bot.send_message(message.chat.id, 'Generating content plan for you...')
-    await state.finish()
-    content_plan = await data_fetcher.generate_content_plan(message.chat.id)
     await bot.send_message(message.chat.id,
-                           f"Here is the content plan I created for you:\n{content_plan['response']}",
+                           translations.hello_message.format(fullName=user_info['fullName']),
                            reply_markup=keyboard)
 
 
-@dp.message_handler(lambda message: message.text.startswith('Generate post') or message.text.startswith('Next post'))
+@dp.message_handler(state=Form.gen_plan)
+@dp.message_handler(commands=[translations.generate_post_cmd[1:]])
+async def gen_plan(message: types.Message, state: FSMContext):
+    keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
+    button_gen_post = types.KeyboardButton(text=translations.generate_post)
+    keyboard.add(button_gen_post)
+
+    can_generate, plan = await data_fetcher.can_generate_plan(message.chat.id)
+    if not can_generate:
+        await bot.send_message(message.chat.id,
+                               translations.generation_error.format(plan=plan))
+    else:
+        await bot.send_message(message.chat.id, translations.content_plan_generated)
+        await state.finish()
+        content_plan = await data_fetcher.generate_content_plan(message.chat.id)
+        await bot.send_message(message.chat.id,
+                               translations.content_plan_created.format(response=content_plan['response']))
+
+    await bot.send_message(message.chat.id,
+                           translations.offer_generate_post,
+                           reply_markup=keyboard)
+
+
+@dp.message_handler(lambda message: message.text.startswith(translations.generate_post) or message.text.startswith(translations.next_post))
 async def next_post(message: types.Message, state: FSMContext):
-    await bot.send_message(message.chat.id, 'Generating next post...')
+    await bot.send_message(message.chat.id, translations.wait_for_post)
 
     keyboard = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-    button_post = types.KeyboardButton(text="Next post")
+    button_post = types.KeyboardButton(text=translations.next_post)
     keyboard.add(button_post)
-    button_publish = types.KeyboardButton(text="/publish")
+    button_publish = types.KeyboardButton(text=translations.publish)
     keyboard.add(button_publish)
 
     post = await data_fetcher.generate_next_post(message.chat.id)
-    if post.get('error', None):
+    if post.get('error', None) or not 'response' in post:
         newposts_keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
-        newposts_keyboard.add(types.KeyboardButton(text='/generate_plan'))
-        await bot.send_message(message.chat.id, 'Content plan has ended, generate new posts?',
+        newposts_keyboard.add(types.KeyboardButton(text=translations.generate_post_cmd))
+        await bot.send_message(message.chat.id,
+                               translations.generate_new_posts,
                                reply_markup=newposts_keyboard)
     else:
-        await bot.send_message(message.chat.id, post['response'], reply_markup=keyboard)
+        await bot.send_message(message.chat.id,
+                               f"{post.get('meta', {}).get('topic', '')}\n{post['response']}",
+                               reply_markup=keyboard)
 
 
-@dp.message_handler(commands=['check_auth', 'publish'])
+@dp.message_handler(commands=[translations.check_auth[1:], translations.publish[1:]])
 async def publish_post(message: types.Message, state: FSMContext):
-    await bot.send_message(message.chat.id, 'Checking access...')
+    await bot.send_message(message.chat.id, translations.access_checking)
     is_auth = await data_fetcher.check_auth(message.chat.id)
     if not is_auth['is_auth']:
+        await bot.send_message(message.chat.id, translations.publish_precaution)
         keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
-        button_auth = types.KeyboardButton(text="/check_auth")
+        button_auth = types.KeyboardButton(text=translations.check_auth)
         keyboard.add(button_auth)
         authorization_url, state = linkedin(message.chat.id).authorization_url(authorization_base_url)
         await bot.send_message(message.chat.id,
-                               f'Provide access for the application, follow the link: {authorization_url}',
+                               translations.provide_access.format(authorization_url=authorization_url),
                                reply_markup=keyboard)
     else:
         keyboard = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-        button_post = types.KeyboardButton(text="Next post")
+        button_post = types.KeyboardButton(text=translations.next_post)
         keyboard.add(button_post)
         is_posted = await data_fetcher.publish_post(message.chat.id)
-        await bot.send_message(message.chat.id, 'Published!' if is_posted else 'Failed to publish :(', reply_markup=keyboard)
+        await bot.send_message(message.chat.id,
+                               translations.published if is_posted else translations.failed_publish,
+                               reply_markup=keyboard)
 
 
 @dp.message_handler(state='*')
 async def error(message):
     keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
-    keyboard.add(types.KeyboardButton(text="/generate_plan"))
-    await message.reply('Sorry, I did not understand your command.', reply_markup=keyboard)
+    keyboard.add(types.KeyboardButton(text=translations.generate_plan_cmd))
+    await message.reply(translations.not_understand, reply_markup=keyboard)
 
 
 ##################### ОТПРАВЛЕНИЕ НАПОМИНАНИЙ О ПАРАХ ########################

@@ -1,4 +1,6 @@
+import enum
 import logging
+import random
 from functools import lru_cache
 
 import openai
@@ -9,8 +11,14 @@ from fastapi import FastAPI, HTTPException
 from .db import linkedin_api, users_db
 from .local_settings import (LINKEDIN_CLIENT_ID, LINKEDIN_CLIENT_SECRET,
                              OPENAI_KEY)
+from .prompts import openai_generate_content_plan, openai_generate_post
 
 app = FastAPI()
+
+class Mode(enum.Enum):
+    ALWAYS_GENERATE = 'always_gen'
+    PROD = 'prod'
+MODE = Mode.ALWAYS_GENERATE
 
 openai.api_key = OPENAI_KEY
 scope = ['profile', 'r_liteprofile', 'w_member_social']
@@ -50,11 +58,11 @@ def get_tokens(chat_id, auth_code):
     response = requests.post(access_token_url, data=data, timeout=30)
     response = response.json()
 
-    print(response)
-    access_token = response['access_token']
+    logging.debug(response.keys())
+    access_token = response.get('access_token', None)
+    if not access_token:
+        raise RuntimeError('Failed to retrieve token')
     # refresh_token = response['refresh_token']
-
-    print("access_token", access_token)
     # print("refresh_token", refresh_token)
     return {'access_token': access_token}
 
@@ -122,7 +130,7 @@ def get_info(chat_id, account_id):
     data = linkedin_api.get_profile(account_id)
     logging.debug(f'Fetched info for `{account_id}`')
     users_db.add_info(chat_id, data)
-    data['fullName'] = f"{data['firstName']} {data['lastName']}"
+    data['fullName'] = f"{data.get('firstName', 'unknown')} {data.get('lastName', 'unknown')}"
     return data
 
 
@@ -132,32 +140,19 @@ def check_auth(chat_id):
     return {'is_auth': bool(len(tokens) > 0)}
 
 
-def prompt_gen_plan(profession, experience, task, n=5):
-    return f"""Brief review of my LinkedIn profile: I am {profession}.
-My experience: {experience}.
-You will create a content plan (headings only) for my LinkedIn blog.
-Suggest {n} LinkedIn post topics based on my profession and background, do not use companies I worked for, use different formats.
-{task}"""
-
-
-def format_experience(experience_list):
-    out = ''
-    for exp in experience_list:
-        start_date = f"{exp['timePeriod']['startDate']['year']}-{exp['timePeriod']['startDate']['month']}"
-        end_date = 'now'
-        if 'endDate' in exp['timePeriod']:
-            end_date = f"{exp['timePeriod']['endDate']['year']}-{exp['timePeriod']['endDate']['month']}"
-        out += 'Company: {company}; dates: {dates}; position: {position}; description: {descr}. '.format(
-            company=f"{exp['companyName']} ({exp['geoLocationName']})",
-            dates=f"{start_date} - {end_date}",
-            position=exp['title'],
-            descr=exp.get("description", "nothing"),
-        )
-    return out
+def format_plan(plan, last_generated_id):
+    res = ''
+    for d in plan.values():
+        res += f'Week: {d["week"]}\nDay of post: {d["day to post"]}\nFormat: {d["format"]}\nLength: {d["length"]}\nTopic: {d["heading"]}\n\n'
+    res += f'Last generated post for week: {last_generated_id}\n\n'
+    return res
 
 
 @app.get("/can_generate_plan")
 def check_content_plan(chat_id):
+    if MODE == Mode.ALWAYS_GENERATE:
+        return {'can_generate': True}
+
     plan = users_db.get_last_plan(chat_id)
     if plan is None:
         return {'can_generate': True}
@@ -168,27 +163,53 @@ def check_content_plan(chat_id):
     if next_post_id > max_plan_id:
         return {'can_generate': True}
 
-    return {'can_generate': False, 'last_plan': {'data': plan['plan'], 'last_generated_week': last_id}}
+    return {'can_generate': False, 'last_plan': format_plan(plan['plan'], last_id)}
+
+
+def parse_period(period):
+    per = str(period.get('year', ''))
+    month = period.get('month', '')
+    if month:
+        per += f'-{month}'
+    return per
+
+
+def parse_time_period(time_period):
+    start_date = parse_period(time_period.get('startDate', {})) or 'before'
+    end_date = parse_period(time_period.get('endDate', {})) or 'now'
+    return start_date, end_date
+    
+
+def format_experience(experience_list):
+    out = ''
+    if not len(experience_list):
+        logging.warning('Experience list is empty!')
+        return ''
+    for exp in experience_list:
+        start_date, end_date = parse_time_period(exp.get('timePeriod', {}))
+        out += 'Company: {company}; dates: {dates}; position: {position}; description: {descr}; '.format(
+            company=f"{exp['companyName']} ({exp.get('geoLocationName', exp.get('locationName', '`location not stated`'))})",
+            dates=f"{start_date} - {end_date}",
+            position=exp.get('title', 'title not stated'),
+            descr=exp.get("description", "nothing"),
+        )
+    return out
 
 
 @app.get("/generate_content_plan")
 def generate_content_plan(chat_id):
-    assert check_content_plan(chat_id)['can_generate']
+    assert MODE == Mode.ALWAYS_GENERATE or check_content_plan(chat_id)['can_generate']
 
     user_data = users_db.get_info(chat_id)[0]
-    occupation = user_data['info']['headline']
-    experience = format_experience(user_data['info']['experience'])
+    user_info = user_data.get('info', user_data)
+    occupation = user_info.get('headline', '`hidden profession`')
+    experience = format_experience(user_info.get('experience', []))
 
-    task = 'Week: 1; suggested day to post: Monday; suggested length: 550; format: how-to post; suggested heading:'
-    response = openai.Completion.create(
-        model="text-davinci-003",
-        prompt=prompt_gen_plan(profession=occupation, experience=experience, task=task, n=5),
-        temperature=0.6,
-        max_tokens=3100,
+    plan = openai_generate_content_plan(
+        profession=occupation,
+        experience=experience,
     )
-
-    plan = f"{task} {response.choices[0].text}"
-    print(plan)
+    logging.debug(f"For {chat_id} generated plan: {plan}")
     kw = {}
     for line in plan.split('\n'):
         if not line:
@@ -204,15 +225,15 @@ def generate_content_plan(chat_id):
         kw[data['week']] = data
 
     users_db.add_plan(chat_id, kw)
-    print(kw)
-    return {"response": plan}
+    return {"response": plan.replace(';', '\n')}
 
 
 @app.get('/generate_next_post')
 def generate_next_post(chat_id):
     user_data = users_db.get_info(chat_id)[0]
-    occupation = user_data['info']['headline']
-    experience = format_experience(user_data['info']['experience'])
+    user_info = user_data.get('info', {})
+    occupation = user_info.get('headline', '`hidden profession`')
+    experience = format_experience(user_info.get('experience', []))
 
     plan = users_db.get_last_plan(chat_id)
     if not plan:
@@ -227,57 +248,16 @@ def generate_next_post(chat_id):
         raise HTTPException(status_code=409, detail='Failed to create post, plan has ended')
 
     logging.info(f'{chat_id}: {plan}')
-    v = plan[str(next_post_id)]
-    topic = v['heading']
-    length = v['length']
-    post_format = v['format']
+    post_meta = plan[str(next_post_id)]
+    topic = post_meta['heading']
+    length = post_meta['length']
+    post_format = post_meta['format']
 
-    response = openai.Completion.create(
-        model="text-davinci-003",
-        prompt=prompt_gen_post(
-            profession=occupation,
-            experience=experience,
-            topic=topic,
-            length=length,
-            post_format=post_format,
-        ),
-        max_tokens=3100,
-        temperature=0.6,
-    )
-    generated_post = response.choices[0].text
-    next_is_header = False
-    header, body = "", ""
-    for j, line in enumerate(generated_post.strip().split('\n')):
-        if j == 0 and 'Heading' not in line:
-            next_is_header = True
-        if next_is_header:
-            header = line.strip()
-            next_is_header = False
-            continue
-        if not line.strip():
-            continue
-
-        if 'Heading:' in line:
-            header = line.split('Heading:')[-1].strip()
-            if not header:            
-                next_is_header = True
-        elif 'Body:' in line:
-            body = line.split('Body:')[-1].strip() + '\n'
-        else:
-            body += line + '\n\n'
-
-    header = header.strip(" \n").strip('"')
-    content = f'{header}\n\n{body.strip()}'
+    content = openai_generate_post(profession=occupation, experience=experience, topic=topic,
+                                   length=length, post_format=post_format)
     users_db.add_post(chat_id, plan_date, next_post_id, content)
-    return {"response": content}
+    return {"meta": post_meta, "response": content}
 
-
-def prompt_gen_post(profession, experience, topic, length, post_format):
-    return f"""Brief review of my LinkedIn profile: I am {profession}.
-My experience: {experience}.
-Generate a post for my LinkedIn blog, topic: "{topic}", desired length: {length}, desired format: {post_format}.
-Only heading and body. The length must be {length}, pay attention to format.
-"""
 
 @app.get('/publish_post')
 def publish_post(chat_id):
