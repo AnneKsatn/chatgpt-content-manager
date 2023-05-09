@@ -12,7 +12,7 @@ async def check_response(resp):
     error_text = None
     if resp.status >= 300 or resp.status < 200:
         error_text = await resp.text()
-    raise HandledError(error_text)
+        raise HandledError(error_text)
 
 
 async def publish_post(chat_id):
