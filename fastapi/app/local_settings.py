@@ -10,3 +10,5 @@ _creds = json.load(open(Path(__file__).parent / 'credentials.json'))
 LINKEDIN_LOGIN = _creds['login']
 LINKEDIN_PASSWORD = _creds['password']
 OPENAI_KEY = _creds['openai_key']
+
+BACKEND_API = _creds.get('redirect_uri', 'https://localhost:8432')

@@ -6,16 +6,15 @@ import data_fetcher
 from aiogram import Bot, types
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.dispatcher import Dispatcher, FSMContext
-from aiogram.dispatcher.filters import Text
 from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.utils import executor
 from data_fetcher import HandledError
-from local_settings import LINKEDIN_CLIENT_ID
+from local_settings import BACKEND_API, LINKEDIN_CLIENT_ID
 from requests_oauthlib import OAuth2Session
 from texts import translations
 
 scope = ["r_liteprofile", "w_member_social"]
-redirect_url = "https://localhost:8432/token?chat_id={}"
+redirect_url = BACKEND_API + "/token?chat_id={}"
 authorization_base_url = "https://www.linkedin.com/oauth/v2/authorization"
 token_url = "https://www.linkedin.com/oauth/v2/accessToken"
 linkedin = lambda chat_id: OAuth2Session(LINKEDIN_CLIENT_ID, redirect_uri=redirect_url.format(chat_id), scope=scope)
@@ -81,7 +80,7 @@ async def check_account(message: types.Message, state: FSMContext):
         return
 
     await Form.next()
-    await gen_plan()
+    await gen_plan(message, state)
 
 
 @dp.message_handler(state=Form.gen_plan)

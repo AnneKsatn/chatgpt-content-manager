@@ -7,3 +7,5 @@ LINKEDIN_CLIENT_SECRET = "DArwc9bJkfMfKvTY"
 _creds = json.load(open('credentials.json'))
 LINKEDIN_LOGIN = _creds['login']
 LINKEDIN_PASSWORD = _creds['password']
+
+BACKEND_API = _creds.get('redirect_uri', BACKEND_API)

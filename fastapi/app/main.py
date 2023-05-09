@@ -11,8 +11,8 @@ from pydantic import BaseModel
 from fastapi import Body, FastAPI, HTTPException
 
 from .db import linkedin_api, users_db
-from .local_settings import (LINKEDIN_CLIENT_ID, LINKEDIN_CLIENT_SECRET,
-                             OPENAI_KEY)
+from .local_settings import (BACKEND_API, LINKEDIN_CLIENT_ID,
+                             LINKEDIN_CLIENT_SECRET, OPENAI_KEY)
 from .prompts import (openai_generate_art_prompt, openai_generate_content_plan,
                       openai_generate_image_by_prompt, openai_generate_post)
 
@@ -25,7 +25,7 @@ MODE = Mode.ALWAYS_GENERATE
 
 openai.api_key = OPENAI_KEY
 scope = ['profile', 'r_liteprofile', 'w_member_social']
-redirect_url = 'https://localhost:8432/token?chat_id={}'
+redirect_url = BACKEND_API + '/token?chat_id={}'
 authorization_base_url = 'https://www.linkedin.com/oauth/v2/authorization'
 token_url = 'https://www.linkedin.com/oauth/v2/accessToken'
 

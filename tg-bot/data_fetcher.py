@@ -20,7 +20,7 @@ async def publish_post(chat_id):
         publish = BACKEND_API + f"/publish_post?chat_id={chat_id}"
 
         async with session.get(publish, verify_ssl=False) as response:
-            check_response(response)
+            await check_response(response)
             return await response.json()
 
 
@@ -29,7 +29,7 @@ async def check_auth(chat_id):
         is_authed = BACKEND_API + f"/check_auth?chat_id={chat_id}"
 
         async with session.get(is_authed, verify_ssl=False) as response:
-            check_response(response)
+            await check_response(response)
             return await response.json()
 
 
@@ -38,7 +38,7 @@ async def get_info(chat_id, account_id):
         api_url = BACKEND_API + f"/get_info?chat_id={chat_id}&account_id={account_id}"
 
         async with session.get(api_url, verify_ssl=False) as response:
-            check_response(response)
+            await check_response(response)
             return await response.json()
 
 
@@ -47,7 +47,7 @@ async def generate_content_plan(chat_id):
         api_url = BACKEND_API + f'/generate_content_plan?chat_id={chat_id}'
         
         async with session.get(api_url, verify_ssl=False) as response:
-            check_response(response)
+            await check_response(response)
             return await response.json()
 
 
@@ -67,7 +67,7 @@ async def can_generate_plan(chat_id) -> typing.Tuple[bool, str]:
         api_url = BACKEND_API + f'/can_generate_plan?chat_id={chat_id}'
         
         async with session.get(api_url, verify_ssl=False) as response:
-            check_response(response)
+            await check_response(response)
             resp = await response.json()
             return resp['can_generate'], resp.get('last_plan', None)
 
@@ -78,6 +78,6 @@ async def generate_art_prompt(chat_id, text):
         
         async with session.post(api_url, verify_ssl=False,
                                 json={"params": {'chat_id': chat_id, 'text': text}}) as response:
-            check_response(response)
+            await check_response(response)
             resp = await response.json()
             return resp['response']
