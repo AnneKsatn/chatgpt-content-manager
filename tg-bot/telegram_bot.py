@@ -9,10 +9,10 @@ from aiogram.dispatcher import Dispatcher, FSMContext
 from aiogram.dispatcher.filters import Text
 from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.utils import executor
+from data_fetcher import HandledError
 from local_settings import LINKEDIN_CLIENT_ID
 from requests_oauthlib import OAuth2Session
-
-from .texts import translations
+from texts import translations
 
 scope = ["r_liteprofile", "w_member_social"]
 redirect_url = "https://localhost:8432/token?chat_id={}"
@@ -25,11 +25,23 @@ storage = MemoryStorage()
 bot = Bot(token=os.getenv("TOKEN"))
 dp = Dispatcher(bot, storage=storage)
 
+# the on_throttled object can be either a regular function or coroutine
+async def throttled(*args, **kwargs):
+    message = args[0]  # as message was the first argument in the original handler
+    await message.reply("Throttled, once per 5 mins")
+
 
 # States
 class Form(StatesGroup):
     account = State()
+    check_account = State()
     gen_plan = State()
+
+
+async def error_handler(mess, err_mess):
+    keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
+    keyboard.add(types.KeyboardButton(text=translations.generate_plan_cmd))
+    await mess.reply(err_mess, reply_markup=keyboard)
 
 
 ##################### АВТОРИАЗАЦИЯ ########################
@@ -51,17 +63,31 @@ async def get_account(message: types.Message, state: FSMContext):
     account_id = parsed.group(5)
     user_info = await data_fetcher.get_info(message.chat.id, account_id)
 
-    await Form.next()
-    keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
+    keyboard = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
+    keyboard.add(types.KeyboardButton(text=translations.approve_message))
     keyboard.add(types.KeyboardButton(text=translations.approve_message))
     print(user_info)
+    await Form.next()
     await bot.send_message(message.chat.id,
                            translations.hello_message.format(fullName=user_info['fullName']),
                            reply_markup=keyboard)
 
 
+@dp.message_handler(state=Form.check_account)
+async def check_account(message: types.Message, state: FSMContext):
+    if 'no' in message.text.lower():
+        await Form.account.set()
+        await bot.send_message(message.chat.id, translations.link_again)
+        return
+
+    await Form.next()
+    await gen_plan()
+
+
 @dp.message_handler(state=Form.gen_plan)
-@dp.message_handler(commands=[translations.generate_post_cmd[1:]])
+@dp.message_handler(commands=[translations.generate_plan_cmd[1:]])
+@dp.throttled(throttled, rate=300)
+@dp.errors_handler(exception=HandledError, run_task=lambda message: error_handler(message, 'There was a problem during your request :('))
 async def gen_plan(message: types.Message, state: FSMContext):
     keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
     button_gen_post = types.KeyboardButton(text=translations.generate_post)
@@ -84,6 +110,8 @@ async def gen_plan(message: types.Message, state: FSMContext):
 
 
 @dp.message_handler(lambda message: message.text.startswith(translations.generate_post) or message.text.startswith(translations.next_post))
+@dp.throttled(throttled, rate=300)
+@dp.errors_handler(exception=HandledError, run_task=lambda message: error_handler(message, 'There was a problem during your request :('))
 async def next_post(message: types.Message, state: FSMContext):
     await bot.send_message(message.chat.id, translations.wait_for_post)
 
@@ -95,18 +123,33 @@ async def next_post(message: types.Message, state: FSMContext):
 
     post = await data_fetcher.generate_next_post(message.chat.id)
     if post.get('error', None) or not 'response' in post:
-        newposts_keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
-        newposts_keyboard.add(types.KeyboardButton(text=translations.generate_post_cmd))
+        newposts_keyboard = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
+        newposts_keyboard.add(types.KeyboardButton(text=translations.generate_plan_cmd))
+        newposts_keyboard.add(types.KeyboardButton(text=translations.generate_post))
         await bot.send_message(message.chat.id,
                                translations.generate_new_posts,
                                reply_markup=newposts_keyboard)
     else:
+        topic = post.get('meta', {}).get('heading', '')
+        if imgs := post.get('images', []):
+            # Create media group
+            media = types.MediaGroup()
+
+            # You can also use URL's
+            # For example: get random puss:
+            for img in imgs:
+                media.attach_photo(img, topic)
+
+            # Done! Send media group
+            if imgs:
+                await message.reply_media_group(media=media)
         await bot.send_message(message.chat.id,
-                               f"{post.get('meta', {}).get('topic', '')}\n{post['response']}",
+                               f"{topic}\n{post['response']}",
                                reply_markup=keyboard)
 
 
 @dp.message_handler(commands=[translations.check_auth[1:], translations.publish[1:]])
+@dp.errors_handler(exception=HandledError, run_task=lambda message: error_handler(message, 'There was a problem during your request :('))
 async def publish_post(message: types.Message, state: FSMContext):
     await bot.send_message(message.chat.id, translations.access_checking)
     is_auth = await data_fetcher.check_auth(message.chat.id)
@@ -129,11 +172,33 @@ async def publish_post(message: types.Message, state: FSMContext):
                                reply_markup=keyboard)
 
 
+class GenArt(StatesGroup):
+    gen = State()
+
+
+@dp.message_handler(commands=['generate_art_prompt'])
+async def gen_art_prompt(message):
+    await GenArt.gen.set()
+    await message.reply('Send your publication text prompt')
+
+
+@dp.message_handler(state=GenArt.gen)
+@dp.throttled(throttled, rate=300)
+async def gen_art_handler(message, state: FSMContext):
+    if message.text == 'fin':
+        await state.finish()
+        await error(message, err_mess='Continue with posts')
+        return
+    prompt = await data_fetcher.generate_art_prompt(message.chat.id, message.text)
+    await message.reply(prompt)
+    await message.reply("Send new pub to continue, send `fin` to quit that mode")
+
+
 @dp.message_handler(state='*')
-async def error(message):
+async def error(message, err_mess=translations.not_understand):
     keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
     keyboard.add(types.KeyboardButton(text=translations.generate_plan_cmd))
-    await message.reply(translations.not_understand, reply_markup=keyboard)
+    await message.reply(err_mess, reply_markup=keyboard)
 
 
 ##################### ОТПРАВЛЕНИЕ НАПОМИНАНИЙ О ПАРАХ ########################

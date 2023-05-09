@@ -1,8 +1,6 @@
-
-
-import logging
 import random
 from dataclasses import asdict, dataclass
+from typing import List
 
 import openai
 
@@ -21,6 +19,15 @@ class OpenAICompletion:
             **(asdict(self))
         )
         return response.choices[0]['message']['content']
+
+    def call_image_generation(self, prompt, n=1, size='1024x1024') -> List[str]:
+        response = openai.Image.create(
+            prompt=prompt,
+            n=n,
+            size=size
+        )
+        image_urls = [u['url'] for u in response['data']]
+        return image_urls
 
 
 default_openai = OpenAICompletion()
@@ -62,3 +69,22 @@ def openai_generate_post(profession, experience, topic, length, post_format,
         ]
     )
     return generated_post
+
+
+def openai_generate_art_prompt(topic, publication, post_format,
+                               openai_wrapper: OpenAICompletion = default_openai):
+    role = 'You are art prompts generator. ' \
+           'You generate short art prompts for illustrations to text posts in LinkedIn blog by publication title and text.'
+    task = f'Title: {topic}; format: {post_format}; text: {publication};\ngenerate short art prompt (up to 30 words)'
+
+    generated_prompt = openai_wrapper.call_chat_completion(
+        messages=[
+            {"role": "system", "content": role},
+            {"role": "user", "content": task},
+        ]
+    )
+    return generated_prompt
+
+
+def openai_generate_image_by_prompt(prompt, openai_wrapper: OpenAICompletion = default_openai):
+    return openai_wrapper.call_image_generation(prompt=prompt + ". no text.")

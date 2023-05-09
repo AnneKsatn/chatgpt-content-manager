@@ -12,6 +12,7 @@ class AppDB:
         self.posts = self.get_db('posts')
         self.plans = self.get_db('plans')
         self.tokens = self.get_db('tokens')
+        self.arts = self.get_db('arts')
     
     @classmethod
     def get_db(cls, name):
@@ -24,6 +25,9 @@ class AppDB:
         return self.tokens.getByQuery({'name': chat_id, 'type': 'tokens'})
     
     def add_info(self, chat_id, user_info):
+        if info := self.get_info(chat_id=chat_id):
+            self.users.updateById(info['id'], {"info": user_info})
+            return
         self.users.add({'name': chat_id, 'type': "info", 'info': user_info})
     
     def get_info(self, chat_id):
@@ -55,6 +59,13 @@ class AppDB:
 
     def get_post(self, chat_id, post_id):
         return self.posts.getByQuery({'name': chat_id, 'post_id': post_id})
+
+    def add_art(self, chat_id, plan_date, post_id, prompt, images):
+        self.arts.add({'name': chat_id, 'plan_date': plan_date, 'post_id': post_id, 'prompt': prompt, 'type': 'prompt', 'images': images})
+
+    def get_last_art_by_plan(self, chat_id, plan_date):
+        last_post_id = self.get_last_post_by_plan(chat_id, plan_date)
+        return self.arts.getByQuery({'name': chat_id, 'plan_date': plan_date, 'post_id': last_post_id, 'type': 'prompt'})
 
 
 users_db = AppDB()

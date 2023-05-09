@@ -2,16 +2,19 @@ import enum
 import logging
 import random
 from functools import lru_cache
+from typing import Annotated
 
 import openai
 import requests
+from pydantic import BaseModel
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException
 
 from .db import linkedin_api, users_db
 from .local_settings import (LINKEDIN_CLIENT_ID, LINKEDIN_CLIENT_SECRET,
                              OPENAI_KEY)
-from .prompts import openai_generate_content_plan, openai_generate_post
+from .prompts import (openai_generate_art_prompt, openai_generate_content_plan,
+                      openai_generate_image_by_prompt, openai_generate_post)
 
 app = FastAPI()
 
@@ -88,12 +91,35 @@ def get_user_info(chat_id):
     return user_info.json()
 
 
-def send_publish_post(chat_id, content):
+def send_publish_post(chat_id, content, images):
     user_id = get_user_info(chat_id)['id']
 
     access_token = users_db.get_access_token(chat_id)[0]['access_token']
     headers = get_headers(access_token)
     url = 'https://api.linkedin.com/rest/posts'
+
+    image_id = None
+    if len(images):
+        # upload image
+        image_upload_init_url = 'https://api.linkedin.com/rest/images?action=initializeUpload'
+        payload = {
+            "initializeUploadRequest": {
+                "owner": f"urn:li:person:{user_id}",
+            }
+        }
+        resp = requests.post(url=image_upload_init_url, headers=headers, json=payload)
+        if resp.status_code >= 300 or resp.status_code < 200:
+            raise RuntimeError(f'Failed to upload image: {resp.text}')
+        upload_url = resp.json()["value"]["uploadUrl"]
+        image_id = resp.json()["value"]["image"]
+        req = requests.put(url=upload_url,
+                           headers=headers,
+                           files={
+                               "upload_file": requests.get(images[0], stream=True).raw
+                           })
+        if req.status_code >= 300 or req.status_code < 200:
+            raise RuntimeError(f'Failed to upload image: {resp.text}')
+
     payload = {
         "author": f"urn:li:person:{user_id}",
         "commentary": content,
@@ -106,6 +132,13 @@ def send_publish_post(chat_id, content):
         "lifecycleState": "PUBLISHED",
         "isReshareDisabledByAuthor": False
     }
+    if image_id:
+        payload["content"] = {
+            "media": {
+                "title": content.split('\n')[0],
+                "id": image_id
+            }
+        }
     resp = requests.post(url=url, headers=headers, json=payload)
     if resp.status_code >= 300 or resp.status_code < 200:
         raise RuntimeError(f'Failed to publish post: {resp.text}')
@@ -255,13 +288,42 @@ def generate_next_post(chat_id):
 
     content = openai_generate_post(profession=occupation, experience=experience, topic=topic,
                                    length=length, post_format=post_format)
-    users_db.add_post(chat_id, plan_date, next_post_id, content)
-    return {"meta": post_meta, "response": content}
+    final_content = f'{topic}\n\n{content}'
+    users_db.add_post(chat_id, plan_date, next_post_id, final_content)
+
+    prompt = openai_generate_art_prompt(topic=topic, post_format=post_format, publication=content)
+    images = openai_generate_image_by_prompt(prompt=prompt)
+    users_db.add_art(chat_id, plan_date, next_post_id, prompt, images)
+
+    return {"meta": post_meta, "art_prompt": prompt, "images": images, "response": content}
 
 
 @app.get('/publish_post')
 def publish_post(chat_id):
-    last_post_id = users_db.get_last_post_id(chat_id=chat_id)
+    last_plan = users_db.get_last_plan(chat_id=chat_id)
+    if not last_plan:
+        raise HTTPException(status_code=404, detail='Plan or post not found')
+
+    last_post_id = users_db.get_last_post_by_plan(chat_id=chat_id, plan_date=last_plan['date'])
+    last_art = users_db.get_last_art_by_plan(chat_id, plan_date=last_plan['date'])
+    if not last_art:
+        last_art = [{'images': []}]
     post = users_db.get_post(chat_id, last_post_id)[0]
-    posted = send_publish_post(chat_id, post['post'])
+    posted = send_publish_post(chat_id, post['post'], last_art[0]['images'])
     return {'is_posted': posted}
+
+
+class ArtPromptParams(BaseModel):
+    chat_id: str
+    text: str
+
+
+@app.post('/generate_art_prompt')
+def gen_art_prompt(params: Annotated[ArtPromptParams, Body(embed=True)]):
+    prompt = openai_generate_art_prompt(
+        topic=params.text.split('\n')[0],
+        post_format=params.text.split('\n')[1],
+        publication='\n'.join(params.text.split('\n')[2:])
+    )
+
+    return {"response": prompt}
