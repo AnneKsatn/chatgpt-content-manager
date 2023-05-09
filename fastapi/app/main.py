@@ -109,7 +109,8 @@ def send_publish_post(chat_id, content, images):
         }
         resp = requests.post(url=image_upload_init_url, headers=headers, json=payload)
         if resp.status_code >= 300 or resp.status_code < 200:
-            raise RuntimeError(f'Failed to upload image: {resp.text}')
+            raise RuntimeError(f'Failed to create image upload url: {resp}, {resp.text}')
+
         upload_url = resp.json()["value"]["uploadUrl"]
         image_id = resp.json()["value"]["image"]
         req = requests.put(url=upload_url,
