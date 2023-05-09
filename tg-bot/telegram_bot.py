@@ -65,7 +65,7 @@ async def get_account(message: types.Message, state: FSMContext):
 
     keyboard = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
     keyboard.add(types.KeyboardButton(text=translations.approve_message))
-    keyboard.add(types.KeyboardButton(text=translations.approve_message))
+    keyboard.add(types.KeyboardButton(text=translations.deny_message))
     print(user_info)
     await Form.next()
     await bot.send_message(message.chat.id,
