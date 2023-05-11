@@ -143,7 +143,7 @@ async def next_post(message: types.Message, state: FSMContext):
             if imgs:
                 await message.reply_media_group(media=media)
         await bot.send_message(message.chat.id,
-                               f"{topic}\n{post['response']}",
+                               f"{post['response']}",
                                reply_markup=keyboard)
 
 
