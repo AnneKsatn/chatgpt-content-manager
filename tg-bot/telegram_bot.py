@@ -18,7 +18,7 @@ redirect_url = BACKEND_API + "/token?chat_id={}"
 authorization_base_url = "https://www.linkedin.com/oauth/v2/authorization"
 token_url = "https://www.linkedin.com/oauth/v2/accessToken"
 linkedin = lambda chat_id: OAuth2Session(LINKEDIN_CLIENT_ID, redirect_uri=redirect_url.format(chat_id), scope=scope)
-ACCOUNT_REGEXP = r'((http(s)?:\/\/)?(www\.)?linkedin\.com\/in\/)?([A-Za-z0-9_.-]+)(/)?'
+ACCOUNT_REGEXP = r'((http(s)?:\/\/)?(www\.)?linkedin\.com\/([\w]+\/)?in\/)?([A-Za-z0-9_.-]+)(/)?'
 
 storage = MemoryStorage()
 bot = Bot(token=os.getenv("TOKEN"))
@@ -59,7 +59,7 @@ async def command_start(message: types.Message):
 async def get_account(message: types.Message, state: FSMContext):
     logging.info(message)
     parsed = re.search(ACCOUNT_REGEXP, message.text)
-    account_id = parsed.group(5)
+    account_id = parsed.group(6)
     user_info = await data_fetcher.get_info(message.chat.id, account_id)
 
     keyboard = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
@@ -143,7 +143,7 @@ async def next_post(message: types.Message, state: FSMContext):
             if imgs:
                 await message.reply_media_group(media=media)
         await bot.send_message(message.chat.id,
-                               f"{topic}\n{post['response']}",
+                               f"{post['response']}",
                                reply_markup=keyboard)
 
 
@@ -154,20 +154,22 @@ async def publish_post(message: types.Message, state: FSMContext):
     is_auth = await data_fetcher.check_auth(message.chat.id)
     if not is_auth['is_auth']:
         await bot.send_message(message.chat.id, translations.publish_precaution)
-        keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
+        keyboard = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
         button_auth = types.KeyboardButton(text=translations.check_auth)
         keyboard.add(button_auth)
+        keyboard.add(types.KeyboardButton(text='Next post'))
         authorization_url, state = linkedin(message.chat.id).authorization_url(authorization_base_url)
         await bot.send_message(message.chat.id,
                                translations.provide_access.format(authorization_url=authorization_url),
                                reply_markup=keyboard)
     else:
+        await bot.send_message(message.chat.id, "Access granted, saving post as draft!")
         keyboard = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
         button_post = types.KeyboardButton(text=translations.next_post)
         keyboard.add(button_post)
         is_posted = await data_fetcher.publish_post(message.chat.id)
         await bot.send_message(message.chat.id,
-                               translations.published if is_posted else translations.failed_publish,
+                               'Saved post as draft!' if is_posted else translations.failed_publish,
                                reply_markup=keyboard)
 
 

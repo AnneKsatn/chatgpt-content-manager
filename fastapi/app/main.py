@@ -115,11 +115,11 @@ def send_publish_post(chat_id, content, images):
         image_id = resp.json()["value"]["image"]
         req = requests.put(url=upload_url,
                            headers=headers,
-                           files={
-                               "upload_file": requests.get(images[0], stream=True).raw
-                           })
+                           data=requests.get(images[0]).content
+                           )
         if req.status_code >= 300 or req.status_code < 200:
-            raise RuntimeError(f'Failed to upload image: {resp.text}')
+            raise RuntimeError(f'Failed to upload image: {req} {req.content}')
+        print(req.content)
 
     payload = {
         "author": f"urn:li:person:{user_id}",
@@ -130,21 +130,21 @@ def send_publish_post(chat_id, content, images):
             "targetEntities": [],
             "thirdPartyDistributionChannels": []
         },
-        "lifecycleState": "PUBLISHED",
+        "lifecycleState": "DRAFT",
         "isReshareDisabledByAuthor": False
     }
     if image_id:
         payload["content"] = {
             "media": {
-                "title": content.split('\n')[0],
+                "title": content.split('\n')[0].strip('"'),
                 "id": image_id
             }
         }
     resp = requests.post(url=url, headers=headers, json=payload)
     if resp.status_code >= 300 or resp.status_code < 200:
         raise RuntimeError(f'Failed to publish post: {resp.text}')
-    print(resp.json())
-    return resp.json()
+    print(resp.content)
+    return resp.content #json()
 
 
 @app.get("/")
@@ -212,7 +212,7 @@ def parse_time_period(time_period):
     start_date = parse_period(time_period.get('startDate', {})) or 'before'
     end_date = parse_period(time_period.get('endDate', {})) or 'now'
     return start_date, end_date
-    
+
 
 def format_experience(experience_list):
     out = ''
@@ -289,14 +289,15 @@ def generate_next_post(chat_id):
 
     content = openai_generate_post(profession=occupation, experience=experience, topic=topic,
                                    length=length, post_format=post_format)
-    final_content = f'{topic}\n\n{content}'
+    topic_clean = topic.strip().strip('"')
+    final_content = f'{topic_clean}\n\n{content}'
     users_db.add_post(chat_id, plan_date, next_post_id, final_content)
 
     prompt = openai_generate_art_prompt(topic=topic, post_format=post_format, publication=content)
     images = openai_generate_image_by_prompt(prompt=prompt)
     users_db.add_art(chat_id, plan_date, next_post_id, prompt, images)
 
-    return {"meta": post_meta, "art_prompt": prompt, "images": images, "response": content}
+    return {"meta": post_meta, "art_prompt": prompt, "images": images, "response": final_content}
 
 
 @app.get('/publish_post')
