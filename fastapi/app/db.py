@@ -26,7 +26,7 @@ class AppDB:
     
     def add_info(self, chat_id, user_info):
         if info := self.get_info(chat_id=chat_id):
-            self.users.updateById(info['id'], {"info": user_info})
+            self.users.updateById(info[0]['id'], {"info": user_info})
             return
         self.users.add({'name': chat_id, 'type': "info", 'info': user_info})
     
