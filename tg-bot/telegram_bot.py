@@ -142,9 +142,14 @@ async def next_post(message: types.Message, state: FSMContext):
             # Done! Send media group
             if imgs:
                 await message.reply_media_group(media=media)
+
+                
+        inline_keyboard = types.InlineKeyboardMarkup(row_width=1).add(
+            types.InlineKeyboardButton(text=translations.publish)),
+    
         await bot.send_message(message.chat.id,
                                f"{post['response']}",
-                               reply_markup=keyboard)
+                               reply_markup=inline_keyboard)
 
 
 @dp.message_handler(commands=[translations.check_auth[1:], translations.publish[1:]])
